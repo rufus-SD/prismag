@@ -95,12 +95,9 @@ func Run(ctx context.Context, input string, opts Options) (Result, error) {
 		opts.Creds = availability.FromEnv()
 	}
 
-	parsed := parser.Parse(input)
+	parsed := applyDefault(parser.Parse(input), opts.Registry)
 	if len(parsed.Tasks) == 0 {
-		if parser.LooksTagged(input) {
-			return Result{}, fmt.Errorf("a line starts with @@ but isn't a valid tag — use '@@alias: task' (alias = letters, digits, . _ -)")
-		}
-		return Result{}, fmt.Errorf("no @@alias: tags found in prompt")
+		return Result{}, noTasksError(input)
 	}
 
 	// Merge workspace context (git diff, files) ahead of any inline preamble.

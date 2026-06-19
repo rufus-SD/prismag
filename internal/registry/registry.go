@@ -57,13 +57,42 @@ type Alias struct {
 	Description string `yaml:"description,omitempty"`
 }
 
+// ExecConfig holds default settings for the CLI tool loop, so a user sets
+// permissions once in registry.yaml instead of passing --exec flags every run.
+// Command-line flags still override these.
+type ExecConfig struct {
+	// Enabled turns on the permission-gated tool loop for the CLI path by
+	// default (blocks may write files, etc.). Off unless set.
+	Enabled bool `yaml:"enabled"`
+	// Shell also allows the run_shell tool when exec is enabled.
+	Shell bool `yaml:"shell"`
+	// Approve is "ask" (confirm each action with y/N — the default) or "auto"
+	// (run actions without prompting).
+	Approve string `yaml:"approve,omitempty"`
+	// Root, if set, confines file actions to this directory tree (~ allowed).
+	Root string `yaml:"root,omitempty"`
+	// MaxSteps caps tool iterations per block (0 = engine default).
+	MaxSteps int `yaml:"max_steps,omitempty"`
+}
+
+// AutoApprove reports whether actions run without a per-action prompt.
+func (e ExecConfig) AutoApprove() bool {
+	return strings.EqualFold(strings.TrimSpace(e.Approve), "auto")
+}
+
 // Registry holds normalized alias → model mappings.
 type Registry struct {
 	path    string
 	aliases map[string]Alias // keys are lowercased
+	def     string           // default alias for untagged prompts (lowercased)
+	exec    ExecConfig
 }
 
 type file struct {
+	// Default routes an untagged prompt to this alias, so `prismag "do X"`
+	// works without a @@tag. Empty = untagged prompts are an error.
+	Default string           `yaml:"default,omitempty"`
+	Exec    ExecConfig       `yaml:"exec,omitempty"`
 	Aliases map[string]Alias `yaml:"aliases"`
 }
 
@@ -82,6 +111,7 @@ func Load(path string) (*Registry, error) {
 	r := &Registry{
 		path:    path,
 		aliases: make(map[string]Alias, len(f.Aliases)),
+		exec:    f.Exec,
 	}
 
 	if len(f.Aliases) == 0 {
@@ -101,6 +131,13 @@ func Load(path string) (*Registry, error) {
 		}
 		entry.Provider = Provider(strings.ToLower(string(entry.Provider)))
 		r.aliases[name] = entry
+	}
+
+	if def := strings.ToLower(strings.TrimSpace(f.Default)); def != "" {
+		if _, ok := r.aliases[def]; !ok {
+			return nil, fmt.Errorf("registry %s: default alias %q is not defined", path, f.Default)
+		}
+		r.def = def
 	}
 
 	return r, nil
@@ -123,6 +160,17 @@ func validateAlias(path, name string, a Alias) error {
 // Path returns the file this registry was loaded from.
 func (r *Registry) Path() string {
 	return r.path
+}
+
+// Default returns the alias that untagged prompts route to (lowercased), or ""
+// when none is configured.
+func (r *Registry) Default() string {
+	return r.def
+}
+
+// Exec returns the configured defaults for the CLI tool loop.
+func (r *Registry) Exec() ExecConfig {
+	return r.exec
 }
 
 // Resolve looks up an alias (case-insensitive).

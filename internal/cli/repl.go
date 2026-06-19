@@ -63,9 +63,11 @@ type replState struct {
 	last      string    // last prompt, for :retry
 	ed        *editor   // line editor, also used to prompt for exec approvals
 
-	exec      bool // tool loop enabled for this session
-	execShell bool // run_shell allowed
-	execYes   bool // auto-approve actions (no per-action prompt)
+	exec      bool   // tool loop enabled for this session
+	execShell bool   // run_shell allowed
+	execYes   bool   // auto-approve actions (no per-action prompt)
+	execRoot  string // confine file actions to this tree (from config; "" = none)
+	execSteps int    // max tool iterations per block (0 = engine default)
 
 	mu     sync.Mutex
 	cancel context.CancelFunc // cancels the in-flight turn (set during runTurn)
@@ -239,11 +241,17 @@ func startREPL(resumeRef string) error {
 		return err
 	}
 	inner, storeName := selectStore(flagStore)
+	cfg := reg.Exec()
 	st := &replState{
 		reg:       reg,
 		creds:     availability.FromEnv(),
 		store:     &offsetStore{inner: inner},
 		storeName: storeName,
+		exec:      cfg.Enabled,
+		execShell: cfg.Shell,
+		execYes:   cfg.AutoApprove(),
+		execRoot:  expandHome(cfg.Root),
+		execSteps: cfg.MaxSteps,
 	}
 
 	var seeded int
@@ -298,6 +306,7 @@ func startREPL(resumeRef string) error {
 
 	fmt.Fprint(st.out, Banner())
 	st.printHeader(seeded)
+	st.offerUnlock()
 
 loop:
 	for {
@@ -430,6 +439,9 @@ func (s *replState) runTurn(input string) {
 			fmt.Fprintln(s.out, "  no @@tag found — prompts need at least one '@@alias: task' (try :list)")
 		case strings.Contains(msg, "no @@alias is ready"):
 			fmt.Fprintln(s.out, "  "+msg)
+			if secrets.MaindLocked() {
+				fmt.Fprintln(s.out, "  your keys are stored in maind, which is locked — run :unlock")
+			}
 		default:
 			fmt.Fprintln(s.out, "  error:", msg)
 		}
@@ -557,6 +569,8 @@ func (s *replState) handleMeta(cmd string) (quit bool) {
 		fmt.Fprintln(s.out, "  run `prismag models` in another shell for live discovery; :list shows configured aliases")
 	case "exec":
 		s.setExec(rest)
+	case "unlock":
+		s.unlock()
 	default:
 		fmt.Fprintf(s.out, "  unknown command :%s — type :help\n", name)
 	}
@@ -593,6 +607,54 @@ func (s *replState) setExec(arg string) {
 	fmt.Fprintf(s.out, "  exec ON%s — %s. Blocks can write files and act on this machine.\n", shell, mode)
 }
 
+// offerUnlock proactively asks (on startup) to unlock a locked maind so the
+// session gets the stored keys + persistent memory instead of silently falling
+// back to env keys and in-memory context. Declining leaves a hint for later.
+func (s *replState) offerUnlock() {
+	if !secrets.MaindLocked() || s.ed == nil || !s.tty {
+		return
+	}
+	s.ed.setPrompt("  maind is locked — unlock now to load your keys + memory? [Y/n] ")
+	line, err := s.ed.readLine()
+	if err != nil {
+		return
+	}
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "n", "no":
+		fmt.Fprintln(s.out, "  staying locked — using env keys + memory. Run :unlock anytime.")
+		fmt.Fprintln(s.out)
+		return
+	}
+	s.unlock()
+	fmt.Fprintln(s.out)
+}
+
+// unlock bridges to maind: it launches `maind unlock` (which prompts for the
+// passphrase itself — the REPL never sees it), then refreshes credentials so the
+// session can use the now-hydrated keys.
+func (s *replState) unlock() {
+	if !secrets.MaindLocked() {
+		if secrets.MaindReady() {
+			fmt.Fprintln(s.out, "  maind is already unlocked")
+		} else {
+			fmt.Fprintln(s.out, "  maind not found on PATH")
+		}
+		return
+	}
+	if err := secrets.Unlock(); err != nil {
+		fmt.Fprintln(s.out, "  unlock failed:", err)
+		return
+	}
+	s.creds = availability.FromEnv()
+	// Upgrade the context store to maind now that it's available (preserving the
+	// running offset so chronology is unbroken).
+	if contextstore.MaindAvailable() {
+		s.store.inner = contextstore.NewMaindStore()
+		s.storeName = "maind"
+	}
+	fmt.Fprintln(s.out, "  maind unlocked — keys + persistent memory loaded for this session")
+}
+
 // execPolicy builds the tool-loop policy for a turn, or nil when exec is off.
 func (s *replState) execPolicy() *agent.Policy {
 	if !s.exec {
@@ -600,6 +662,8 @@ func (s *replState) execPolicy() *agent.Policy {
 	}
 	return &agent.Policy{
 		AllowShell: s.execShell,
+		Root:       s.execRoot,
+		MaxSteps:   s.execSteps,
 		Emit:       func(line string) { fmt.Fprintln(s.out, line) },
 		Approve: func(a agent.Action) (bool, string) {
 			if s.execYes {
@@ -735,6 +799,17 @@ func (s *replState) printHeader(seeded int) {
 		readyStr = "no keys — run `prismag setup` (you can still draft prompts)"
 	}
 	fmt.Fprintf(s.out, "  session %s · store: %s · ready: %s\n", s.session, s.storeName, readyStr)
+	if s.exec {
+		mode := "asks y/N per action"
+		if s.execYes {
+			mode = "auto-approves"
+		}
+		shell := ""
+		if s.execShell {
+			shell = " + shell"
+		}
+		fmt.Fprintf(s.out, "  exec ON%s (%s) — blocks can act on this machine; :exec off to disable\n", shell, mode)
+	}
 	if seeded > 0 {
 		fmt.Fprintf(s.out, "  resumed — recalled %d earlier turn(s) into context\n", seeded)
 	}
@@ -792,6 +867,7 @@ func replHelp() string {
     :transcript      print this session's transcript path
     :models          hint for live model discovery
     :exec [shell|yes|off]  let blocks take real actions (write files, run_shell); asks before each
+    :unlock          unlock maind (prompts for your passphrase) to load stored keys
     :help            this help
     :quit            end the session (Ctrl-D also works)
 

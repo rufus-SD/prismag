@@ -37,12 +37,9 @@ func BuildPlan(input string, opts Options) (Plan, error) {
 	if opts.Registry == nil {
 		return Plan{}, fmt.Errorf("registry is required")
 	}
-	parsed := parser.Parse(input)
+	parsed := applyDefault(parser.Parse(input), opts.Registry)
 	if len(parsed.Tasks) == 0 {
-		if parser.LooksTagged(input) {
-			return Plan{}, fmt.Errorf("a line starts with @@ but isn't a valid tag — use '@@alias: task' (alias = letters, digits, . _ -)")
-		}
-		return Plan{}, fmt.Errorf("no @@alias: tags found in prompt")
+		return Plan{}, noTasksError(input)
 	}
 
 	preamble := parsed.Preamble
@@ -85,6 +82,39 @@ func BuildPlan(input string, opts Options) (Plan, error) {
 		plan.Blocks = append(plan.Blocks, blk)
 	}
 	return plan, nil
+}
+
+// applyDefault routes an untagged prompt to the registry's default alias (if
+// configured) by turning the whole input into a single block. It is a no-op when
+// the prompt already has @@tags or no default is set.
+func applyDefault(parsed parser.ParsedPrompt, reg *registry.Registry) parser.ParsedPrompt {
+	if len(parsed.Tasks) > 0 {
+		return parsed
+	}
+	def := reg.Default()
+	body := strings.TrimSpace(parsed.Preamble)
+	// A line that looks like a tag but didn't parse is a typo, not free text —
+	// surface it instead of quietly routing to the default.
+	if def == "" || body == "" || parser.LooksTagged(body) {
+		return parsed
+	}
+	return parser.ParsedPrompt{
+		Tasks: []parser.RoutedTask{{
+			Alias:    def,
+			RawAlias: def,
+			Task:     body,
+			Index:    0,
+		}},
+	}
+}
+
+// noTasksError reports the right "nothing to run" error: a malformed @@ tag, or
+// genuinely no tags (hinting at the default-alias escape hatch).
+func noTasksError(input string) error {
+	if parser.LooksTagged(input) {
+		return fmt.Errorf("a line starts with @@ but isn't a valid tag — use '@@alias: task' (alias = letters, digits, . _ -)")
+	}
+	return fmt.Errorf("no @@alias: tags found — add one (e.g. '@@opus: …'), or set a 'default:' alias in registry.yaml so untagged prompts route automatically")
 }
 
 // checkUnknown returns an error listing any unregistered aliases, with a

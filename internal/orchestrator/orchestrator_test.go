@@ -90,6 +90,31 @@ func testRegistry(t *testing.T) *registry.Registry {
 	return r
 }
 
+// registryWithDefault builds a registry that routes untagged prompts to def.
+func registryWithDefault(t *testing.T, def string) *registry.Registry {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "registry.yaml")
+	content := "default: " + def + `
+aliases:
+  opus:
+    model: claude-test
+    provider: anthropic
+    agent: opus-planner
+  fast:
+    model: gpt-test
+    provider: openai
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	r, err := registry.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
 func testFactory() BackendFactory {
 	return func(a registry.Alias) (backend.Backend, error) {
 		switch a.Provider {

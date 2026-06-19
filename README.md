@@ -162,6 +162,17 @@ aliases:
     description: Cheap, quick summaries and simple transforms
 ```
 
+Two optional top-level keys remove friction for everyday use:
+
+```yaml
+default: opus4.8       # untagged prompts route here, so `prismag "do X"` needs no @@tag
+exec:                  # CLI tool-loop defaults — set permissions once, no flags per run
+  enabled: true        # let blocks act on this machine (write files, …)
+  shell: true          # also allow run_shell
+  approve: ask         # ask = confirm each action y/N (default) · auto = no prompt
+  # root: ~/Desktop    # optional: confine file actions to one tree
+```
+
 ### Models resolve to live ids (no more stale 404s)
 
 The same model has a different id in every context — `claude-opus-4-8` on the
@@ -183,7 +194,7 @@ as it. Inspect what's available any time with `prismag models`.
 | `prismag setup` | First-time setup: keys, model discovery, starter registry |
 | `prismag init [tool]` | Wire routing into this project (auto-detects the editor) |
 | `prismag connect <tool>` | Write the integration rule (+ subagents where supported) |
-| `prismag run "@@..."` | Route and execute a tagged prompt (`--exec` to let blocks act) |
+| `prismag run "@@..."` | Route and execute a tagged prompt (untagged → `default:` alias; `--exec`/`exec:` lets blocks act) |
 | `prismag route "@@..."` | Show the delegation plan without executing (`--json` too) |
 | `prismag list` | List `@@aliases` with availability marks |
 | `prismag models` | Show models available right now |
@@ -237,19 +248,30 @@ the cloud: `@@local: draft` then `@@opus: review`.
 
 ## Let a block act on your machine (CLI exec mode)
 
-By default a CLI block returns **text** — PRISMAG is a router, not an agent. Opt in
-with `--exec` and a block can take real actions through a small, **permission-gated**
+By default a CLI block returns **text** — PRISMAG is a router, not an agent. Turn
+on exec and a block can take real actions through a small, **permission-gated**
 tool loop: it asks before every step, so you grant rights action-by-action.
+
+Set it once in `registry.yaml` (`exec.enabled: true`) plus a `default:` alias, and
+the everyday flow needs no tag and no flags — like an agent that asks first:
+
+```bash
+prismag "create a folder on my desktop named poems"
+  ⚠ allow run_shell: mkdir -p ~/Desktop/poems ? [y/N] y
+  ✓ run_shell: mkdir -p ~/Desktop/poems
+```
+
+Prefer per-run control instead? Skip the config and pass `--exec` (flags always
+override config):
 
 ```bash
 prismag run --exec "@@opus4.8: create ~/Desktop/poem.txt with a short flower poem"
-  ⚠ allow write_file ~/Desktop/poem.txt (291 bytes) ? [y/N] y
-  ✓ write_file ~/Desktop/poem.txt (291 bytes)
 ```
 
-- Tools: `write_file`, `read_file`, and `run_shell` (only with `--exec-shell`).
-- Every action needs approval; `--yes` auto-approves (use with care), and a
-  non-interactive shell denies by default.
+- Tools: `write_file`, `read_file`, and `run_shell` (`exec.shell: true` / `--exec-shell`).
+- Every action needs approval; `approve: auto` (or `--yes`) skips the prompt (use
+  with care), and a non-interactive shell denies by default. `root:` confines file
+  actions to one tree.
 - The protocol is provider-agnostic (a fenced `prismag` JSON action), so it works
   on Anthropic, OpenAI, OpenRouter, **and local** Ollama/vLLM models alike.
 - **CLI-only by design**: inside an IDE the agent already has its own tools, so

@@ -61,6 +61,35 @@ func MaindReady() bool {
 	return strings.TrimSpace(string(out)) == "ready"
 }
 
+// MaindLocked reports whether maind is installed but currently locked — the case
+// where stored keys exist but can't be read until the user unlocks.
+func MaindLocked() bool {
+	_, ok := MaindPath()
+	return ok && !MaindReady()
+}
+
+// Unlock launches `maind unlock` with the terminal attached so the user enters
+// their passphrase into maind's own no-echo prompt — PRISMAG never sees or
+// handles the secret. On success it re-hydrates keys into the process env.
+func Unlock() error {
+	p, ok := MaindPath()
+	if !ok {
+		return fmt.Errorf("maind not found on PATH")
+	}
+	cmd := exec.Command(p, "unlock")
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return err
+	}
+	if !MaindReady() {
+		return fmt.Errorf("maind is still locked")
+	}
+	Hydrate()
+	return nil
+}
+
 // Hydrate loads any stored keys into the process env without overriding values
 // already present. Best-effort: a failure for one provider never blocks others.
 func Hydrate() {

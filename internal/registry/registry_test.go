@@ -87,6 +87,62 @@ aliases:
 	}
 }
 
+func TestLoadDefaultAndExec(t *testing.T) {
+	yaml := `
+default: opus
+exec:
+  enabled: true
+  shell: true
+  approve: auto
+  root: ~/Desktop
+  max_steps: 5
+aliases:
+  opus:
+    model: claude-opus-4-8
+    provider: anthropic
+`
+	r, err := Load(writeRegistry(t, yaml))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Default() != "opus" {
+		t.Errorf("Default() = %q, want opus", r.Default())
+	}
+	e := r.Exec()
+	if !e.Enabled || !e.Shell || e.MaxSteps != 5 || e.Root != "~/Desktop" {
+		t.Errorf("exec = %+v", e)
+	}
+	if !e.AutoApprove() {
+		t.Error("AutoApprove() = false, want true for approve: auto")
+	}
+}
+
+func TestLoadDefaultUnknownAliasFails(t *testing.T) {
+	yaml := `
+default: nope
+aliases:
+  opus:
+    model: claude-opus-4-8
+    provider: anthropic
+`
+	if _, err := Load(writeRegistry(t, yaml)); err == nil {
+		t.Fatal("expected error: default points at an undefined alias")
+	}
+}
+
+func TestExecDefaultsAreOff(t *testing.T) {
+	r, err := Load(writeRegistry(t, validYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Default() != "" {
+		t.Errorf("Default() = %q, want empty", r.Default())
+	}
+	if e := r.Exec(); e.Enabled || e.AutoApprove() {
+		t.Errorf("exec defaults should be off, got %+v", e)
+	}
+}
+
 func TestLoadMissingProvider(t *testing.T) {
 	yaml := `
 aliases:

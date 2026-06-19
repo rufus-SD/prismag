@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/rufus-SD/prismag/internal/agent"
@@ -14,6 +15,7 @@ import (
 	"github.com/rufus-SD/prismag/internal/discovery"
 	"github.com/rufus-SD/prismag/internal/orchestrator"
 	"github.com/rufus-SD/prismag/internal/registry"
+	"github.com/rufus-SD/prismag/internal/secrets"
 	"github.com/rufus-SD/prismag/internal/workspace"
 	"github.com/spf13/cobra"
 )
@@ -105,10 +107,13 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 
 	ctxKind := availability.DetectContext(flagRunIDE, flagRunCLI)
 	creds := availability.FromEnv()
+	execPolicy := buildExecPolicy(reg)
 
 	// IDE context: delegate to subagents (the agent executes the plan), unless
-	// --api / --exec forces the standalone provider path (exec runs tools here).
-	if ctxKind == availability.ContextIDE && !flagRunAPI && !flagExec {
+	// --api or exec mode forces the standalone provider path. Exec means "let
+	// prismag act on this machine", so it always runs the tool loop here even
+	// from an IDE terminal (where there's no agent to pick up a plan).
+	if ctxKind == availability.ContextIDE && !flagRunAPI && execPolicy == nil {
 		plan, perr := orchestrator.BuildPlan(input, orchestrator.Options{
 			Parallel:      flagParallel,
 			Registry:      reg,
@@ -120,6 +125,15 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 		}
 		fmt.Println(plan.Markdown())
 		return nil
+	}
+
+	// CLI execution path: a locked maind means both the stored keys and the
+	// persistent-memory store are unavailable, so offer the unlock bridge before
+	// silently degrading to env keys + the in-memory store.
+	if secrets.MaindLocked() {
+		if maybeUnlockMaind() {
+			creds = availability.FromEnv()
+		}
 	}
 
 	store, storeName := selectStore(flagStore)
@@ -137,27 +151,91 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 		Context:       availability.ContextCLI,
 		SharedContext: shared,
 		Models:        discovery.Cached(availability.ContextCLI, creds),
-		Exec:          buildExecPolicy(),
+		Exec:          execPolicy,
 	})
 
 	fmt.Println(orchestrator.FormatMarkdown(result))
 	if err != nil {
-		return err
+		return enrichKeyError(err)
 	}
 	return nil
 }
 
-// buildExecPolicy returns the tool-loop policy when --exec is set, else nil
-// (plain text completion). Actions are approved interactively unless --yes.
-func buildExecPolicy() *agent.Policy {
-	if !flagExec {
+// maybeUnlockMaind offers to unlock a locked maind so its stored keys hydrate.
+// Returns true when it unlocked successfully. Interactive only — a non-interactive
+// shell just prints how to unlock and returns false.
+func maybeUnlockMaind() bool {
+	if !secrets.MaindLocked() {
+		return false
+	}
+	if !isInteractive() {
+		fmt.Fprintln(os.Stderr, "  maind is locked — your API keys are stored there. Run 'maind unlock' (or 'maind'), then retry.")
+		return false
+	}
+	if !confirmYesNo("  maind is locked — unlock now to load your stored keys? [Y/n] ", true) {
+		return false
+	}
+	if err := secrets.Unlock(); err != nil {
+		fmt.Fprintln(os.Stderr, "  unlock failed:", err)
+		return false
+	}
+	return true
+}
+
+// enrichKeyError clarifies the "nothing ready" error when the real cause is a
+// locked maind holding the keys.
+func enrichKeyError(err error) error {
+	if err != nil && secrets.MaindLocked() && strings.Contains(err.Error(), "no @@alias is ready") {
+		return fmt.Errorf("%w\n  (your API keys are stored in maind, which is locked — run 'maind unlock' or 'maind', then retry)", err)
+	}
+	return err
+}
+
+// confirmYesNo prompts on stderr and reads a y/n from stdin without buffering
+// ahead (so a following `maind unlock` keeps full access to stdin for its
+// passphrase).
+func confirmYesNo(prompt string, def bool) bool {
+	fmt.Fprint(os.Stderr, prompt)
+	var ans string
+	fmt.Fscanln(os.Stdin, &ans)
+	switch strings.ToLower(strings.TrimSpace(ans)) {
+	case "":
+		return def
+	case "y", "yes":
+		return true
+	default:
+		return false
+	}
+}
+
+// buildExecPolicy returns the tool-loop policy, merging the registry's exec:
+// defaults with command-line flags (flags win). Returns nil — plain text
+// completion — when exec is neither configured nor flagged on. Actions are
+// approved interactively unless auto-approval is set.
+func buildExecPolicy(reg *registry.Registry) *agent.Policy {
+	cfg := reg.Exec()
+	if !flagExec && !cfg.Enabled {
 		return nil
 	}
 	return &agent.Policy{
-		AllowShell: flagExecShell,
-		Approve:    cliApprover(flagExecYes),
+		AllowShell: flagExecShell || cfg.Shell,
+		Root:       expandHome(cfg.Root),
+		MaxSteps:   cfg.MaxSteps,
+		Approve:    cliApprover(flagExecYes || cfg.AutoApprove()),
 		Emit:       func(s string) { fmt.Fprintln(os.Stderr, s) },
 	}
+}
+
+// expandHome resolves a leading ~ so a config root confines actions correctly
+// (the agent compares the resolved root against absolute paths).
+func expandHome(p string) string {
+	p = strings.TrimSpace(p)
+	if p == "~" || strings.HasPrefix(p, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(p, "~"), "/"))
+		}
+	}
+	return p
 }
 
 // cliApprover prompts on stderr for each side-effecting action. With autoYes it
