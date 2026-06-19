@@ -42,7 +42,13 @@ func (p Provider) IsLocal() bool {
 
 // Alias maps one @@tag to a concrete model and backend.
 type Alias struct {
-	Model    string   `yaml:"model"`
+	Model string `yaml:"model"`
+	// Match is an optional model family/prefix (e.g. "claude-opus-4-8"). When set,
+	// PRISMAG resolves it against the live model list for the active context and
+	// picks the best concrete id, so the alias self-heals across renames/contexts.
+	// If empty, Model doubles as the family. Model still serves as the fallback
+	// when no live list is available (offline / no key).
+	Match    string   `yaml:"match,omitempty"`
 	Provider Provider `yaml:"provider"`
 	Agent    string   `yaml:"agent,omitempty"` // IDE subagent that runs this block (delegation target)
 	// BaseURL overrides the endpoint for OpenAI-compatible providers
@@ -101,8 +107,8 @@ func Load(path string) (*Registry, error) {
 }
 
 func validateAlias(path, name string, a Alias) error {
-	if strings.TrimSpace(a.Model) == "" {
-		return fmt.Errorf("registry %s: alias %q: model is required", path, name)
+	if strings.TrimSpace(a.Model) == "" && strings.TrimSpace(a.Match) == "" {
+		return fmt.Errorf("registry %s: alias %q: model or match is required", path, name)
 	}
 	provider := Provider(strings.ToLower(string(a.Provider)))
 	if provider == "" {

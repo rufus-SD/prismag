@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/rufus-SD/prismag/internal/availability"
 	"github.com/rufus-SD/prismag/internal/parser"
 	"github.com/rufus-SD/prismag/internal/registry"
 )
@@ -61,17 +62,25 @@ func BuildPlan(input string, opts Options) (Plan, error) {
 
 	for _, t := range parsed.Tasks {
 		a, _ := opts.Registry.Resolve(t.Alias)
+		model, note := resolveModel(a, opts.Models, availability.ContextIDE)
 		blk := PlanBlock{
 			Index:    t.Index,
 			Alias:    t.Alias,
 			RawAlias: t.RawAlias,
-			Model:    a.Model,
+			Model:    model,
 			Provider: string(a.Provider),
 			Agent:    a.Agent,
 			Task:     t.Task,
 		}
 		if a.Agent == "" {
 			blk.Note = "no IDE subagent configured — set 'agent:' in registry.yaml, or run with --api for the CLI path"
+		}
+		if note != "" {
+			if blk.Note != "" {
+				blk.Note += "; " + note
+			} else {
+				blk.Note = note
+			}
 		}
 		plan.Blocks = append(plan.Blocks, blk)
 	}

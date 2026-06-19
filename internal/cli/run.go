@@ -1,14 +1,17 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 
+	"github.com/rufus-SD/prismag/internal/agent"
 	"github.com/rufus-SD/prismag/internal/availability"
 	"github.com/rufus-SD/prismag/internal/contextstore"
+	"github.com/rufus-SD/prismag/internal/discovery"
 	"github.com/rufus-SD/prismag/internal/orchestrator"
 	"github.com/rufus-SD/prismag/internal/registry"
 	"github.com/rufus-SD/prismag/internal/workspace"
@@ -25,6 +28,9 @@ var (
 	flagRunIDE        bool
 	flagRunCLI        bool
 	flagRunAPI        bool
+	flagExec          bool
+	flagExecShell     bool
+	flagExecYes       bool
 )
 
 var runCmd = &cobra.Command{
@@ -54,6 +60,9 @@ func init() {
 	runCmd.Flags().BoolVar(&flagRunIDE, "ide", false, "force IDE context (emit a subagent delegation plan)")
 	runCmd.Flags().BoolVar(&flagRunCLI, "cli", false, "force CLI context (execute via provider APIs)")
 	runCmd.Flags().BoolVar(&flagRunAPI, "api", false, "in IDE context, execute via provider APIs instead of delegating")
+	runCmd.Flags().BoolVar(&flagExec, "exec", false, "enable the permission-gated tool loop (CLI only): blocks can write files and take actions")
+	runCmd.Flags().BoolVar(&flagExecShell, "exec-shell", false, "with --exec, also allow the run_shell tool")
+	runCmd.Flags().BoolVarP(&flagExecYes, "yes", "y", false, "auto-approve every exec action (use with care)")
 
 	rootCmd.AddCommand(runCmd)
 	rootCmd.RunE = runPrompt
@@ -95,14 +104,16 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 	}
 
 	ctxKind := availability.DetectContext(flagRunIDE, flagRunCLI)
+	creds := availability.FromEnv()
 
 	// IDE context: delegate to subagents (the agent executes the plan), unless
-	// --api forces the standalone provider path.
-	if ctxKind == availability.ContextIDE && !flagRunAPI {
+	// --api / --exec forces the standalone provider path (exec runs tools here).
+	if ctxKind == availability.ContextIDE && !flagRunAPI && !flagExec {
 		plan, perr := orchestrator.BuildPlan(input, orchestrator.Options{
 			Parallel:      flagParallel,
 			Registry:      reg,
 			SharedContext: shared,
+			Models:        discovery.Cached(availability.ContextIDE, creds),
 		})
 		if perr != nil {
 			return perr
@@ -122,9 +133,11 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 		ContextBudget: flagContextBudget,
 		Registry:      reg,
 		Store:         store,
-		Creds:         availability.FromEnv(),
+		Creds:         creds,
 		Context:       availability.ContextCLI,
 		SharedContext: shared,
+		Models:        discovery.Cached(availability.ContextCLI, creds),
+		Exec:          buildExecPolicy(),
 	})
 
 	fmt.Println(orchestrator.FormatMarkdown(result))
@@ -132,6 +145,40 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	return nil
+}
+
+// buildExecPolicy returns the tool-loop policy when --exec is set, else nil
+// (plain text completion). Actions are approved interactively unless --yes.
+func buildExecPolicy() *agent.Policy {
+	if !flagExec {
+		return nil
+	}
+	return &agent.Policy{
+		AllowShell: flagExecShell,
+		Approve:    cliApprover(flagExecYes),
+		Emit:       func(s string) { fmt.Fprintln(os.Stderr, s) },
+	}
+}
+
+// cliApprover prompts on stderr for each side-effecting action. With autoYes it
+// approves everything; when not attached to a terminal it denies (safe default).
+func cliApprover(autoYes bool) func(agent.Action) (bool, string) {
+	reader := bufio.NewReader(os.Stdin)
+	return func(a agent.Action) (bool, string) {
+		if autoYes {
+			return true, ""
+		}
+		if !isInteractive() {
+			return false, "non-interactive; re-run with --yes to allow actions"
+		}
+		fmt.Fprintf(os.Stderr, "  ⚠ allow %s ? [y/N] ", agent.Describe(a))
+		line, _ := reader.ReadString('\n')
+		ans := strings.ToLower(strings.TrimSpace(line))
+		if ans == "y" || ans == "yes" {
+			return true, ""
+		}
+		return false, "user declined"
+	}
 }
 
 // selectStore picks the context store. "auto" uses maind when it's available and

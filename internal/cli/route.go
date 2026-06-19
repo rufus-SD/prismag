@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/rufus-SD/prismag/internal/availability"
+	"github.com/rufus-SD/prismag/internal/discovery"
 	"github.com/rufus-SD/prismag/internal/orchestrator"
 	"github.com/rufus-SD/prismag/internal/workspace"
 	"github.com/spf13/cobra"
@@ -62,6 +64,7 @@ func runRoute(cmd *cobra.Command, args []string) error {
 		Parallel:      flagRouteParallel,
 		Registry:      reg,
 		SharedContext: shared,
+		Models:        discovery.Cached(availability.ContextIDE, availability.FromEnv()),
 	})
 	if err != nil {
 		return err

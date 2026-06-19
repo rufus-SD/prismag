@@ -7,9 +7,11 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/rufus-SD/prismag/internal/agent"
 	"github.com/rufus-SD/prismag/internal/availability"
 	"github.com/rufus-SD/prismag/internal/backend"
 	"github.com/rufus-SD/prismag/internal/contextstore"
+	"github.com/rufus-SD/prismag/internal/discovery"
 	"github.com/rufus-SD/prismag/internal/parser"
 	"github.com/rufus-SD/prismag/internal/registry"
 )
@@ -36,6 +38,15 @@ type Options struct {
 	Context       availability.Context
 	SharedContext string // workspace context (git diff, files) merged into preamble
 
+	// Models is the set of models actually available for the active context
+	// (from discovery). When non-empty, each alias is resolved against it so a
+	// stale/wrong pinned id self-heals to a valid one. Empty = use pinned ids.
+	Models discovery.Result
+
+	// Exec, when non-nil, enables the permission-gated tool loop for each block
+	// (CLI context only). nil = plain text completion. Forces serial execution.
+	Exec *agent.Policy
+
 	// Stream, if set, receives each text delta as a block streams. Only used
 	// for serial runs where a backend supports streaming; falls back to a
 	// blocking Complete otherwise.
@@ -47,6 +58,7 @@ type TaskResult struct {
 	Alias     string
 	RawAlias  string
 	Model     string
+	ModelNote string // set when the pinned id was resolved/substituted against the live list
 	Index     int
 	Output    string
 	Err       error
@@ -121,6 +133,12 @@ func Run(ctx context.Context, input string, opts Options) (Result, error) {
 		return Result{}, fmt.Errorf("no @@alias is ready — run 'prismag list' to see what each needs")
 	}
 
+	// Exec mode runs a permission-gated tool loop; prompts can't interleave, so
+	// force serial execution.
+	if opts.Exec != nil {
+		opts.Parallel = false
+	}
+
 	if opts.Parallel {
 		return runParallel(ctx, parsed, opts, skip)
 	}
@@ -176,10 +194,45 @@ func runParallel(ctx context.Context, parsed parser.ParsedPrompt, opts Options, 
 	return out, firstErr // partial results even on error
 }
 
+// resolveModel maps an alias to a concrete model id for the active context. When
+// a live model list is available it picks the best valid id (self-healing across
+// renames and CLI/IDE naming); otherwise it returns the pinned id unchanged. The
+// returned note is non-empty only when the id was substituted or could not be
+// verified against the live list.
+func resolveModel(a registry.Alias, models discovery.Result, ctx availability.Context) (string, string) {
+	family := a.Match
+	if family == "" {
+		family = a.Model
+	}
+	// Local servers (ollama/vllm) aren't enumerable here — trust the pinned tag.
+	if a.Provider.IsLocal() {
+		return a.Model, ""
+	}
+	var pool []string
+	if ctx == availability.ContextIDE {
+		if pool = models.ByProvider["ide"]; len(pool) == 0 {
+			pool = models.All()
+		}
+	} else {
+		pool = models.ByProvider[string(a.Provider)]
+	}
+	if len(pool) == 0 {
+		return a.Model, "" // no live list (offline / no key) — happy path, stay pinned
+	}
+	id, ok := discovery.Pick(pool, family, a.Model)
+	if !ok {
+		return a.Model, fmt.Sprintf("%q is not in the live %s model list", a.Model, ctx)
+	}
+	if id != a.Model {
+		return id, fmt.Sprintf("resolved %q → %q from the live %s list", a.Model, id, ctx)
+	}
+	return id, ""
+}
+
 func skippedResult(task parser.RoutedTask, opts Options, note string) TaskResult {
 	model := ""
 	if a, ok := opts.Registry.Resolve(task.Alias); ok {
-		model = a.Model
+		model, _ = resolveModel(a, opts.Models, opts.Context)
 	}
 	return TaskResult{
 		Alias:    task.Alias,
@@ -197,14 +250,34 @@ func executeTask(ctx context.Context, preamble string, task parser.RoutedTask, o
 		return TaskResult{}, fmt.Errorf("alias not found")
 	}
 
+	model, modelNote := resolveModel(alias, opts.Models, opts.Context)
+
 	b, err := opts.Factory(alias)
 	if err != nil {
-		return TaskResult{Alias: task.Alias, RawAlias: task.RawAlias, Model: alias.Model, Index: task.Index}, err
+		return TaskResult{Alias: task.Alias, RawAlias: task.RawAlias, Model: model, ModelNote: modelNote, Index: task.Index}, err
 	}
 
 	system := buildSystem(preamble, opts, task, chained)
+
+	// Exec mode (CLI only): drive the permission-gated tool loop instead of a
+	// single completion, so the block can take real actions (write files, etc.).
+	if opts.Exec != nil && opts.Context == availability.ContextCLI {
+		complete := func(c context.Context, sys, prompt string) (string, error) {
+			r, e := b.Complete(c, backend.Request{Model: model, System: sys, Prompt: prompt})
+			return r.Text, e
+		}
+		final, records, aerr := agent.Run(ctx, complete, system, task.Task, *opts.Exec)
+		tr := TaskResult{Alias: task.Alias, RawAlias: task.RawAlias, Model: model, ModelNote: modelNote, Index: task.Index}
+		tr.Output = renderAgentOutput(final, records)
+		if aerr != nil {
+			tr.Err = aerr
+			return tr, aerr
+		}
+		return tr, nil
+	}
+
 	breq := backend.Request{
-		Model:  alias.Model,
+		Model:  model,
 		System: system,
 		Prompt: task.Task,
 	}
@@ -219,12 +292,18 @@ func executeTask(ctx context.Context, preamble string, task parser.RoutedTask, o
 		resp, err = b.Complete(ctx, breq)
 	}
 	tr := TaskResult{
-		Alias:    task.Alias,
-		RawAlias: task.RawAlias,
-		Model:    alias.Model,
-		Index:    task.Index,
+		Alias:     task.Alias,
+		RawAlias:  task.RawAlias,
+		Model:     model,
+		ModelNote: modelNote,
+		Index:     task.Index,
 	}
 	if err != nil {
+		// A model-not-found from the provider with a resolution note means the
+		// pinned id is stale — surface the hint instead of a bare 404.
+		if modelNote != "" {
+			err = fmt.Errorf("%w — %s (run 'prismag models' to refresh)", err, modelNote)
+		}
 		tr.Err = err
 		return tr, err
 	}
@@ -232,6 +311,25 @@ func executeTask(ctx context.Context, preamble string, task parser.RoutedTask, o
 	tr.InTokens = resp.InTokens
 	tr.OutTokens = resp.OutTokens
 	return tr, nil
+}
+
+// renderAgentOutput prepends a compact log of the actions an exec block took to
+// its final answer, so the CLI report shows what actually happened on disk.
+func renderAgentOutput(final string, records []agent.Record) string {
+	if len(records) == 0 {
+		return final
+	}
+	var b strings.Builder
+	for _, r := range records {
+		mark := "✓"
+		if r.Denied {
+			mark = "✗"
+		}
+		b.WriteString(fmt.Sprintf("%s %s\n", mark, agent.Describe(r.Action)))
+	}
+	b.WriteString("\n")
+	b.WriteString(final)
+	return b.String()
 }
 
 func buildSystem(preamble string, opts Options, task parser.RoutedTask, chained bool) string {
@@ -262,6 +360,9 @@ func FormatMarkdown(r Result) string {
 	}
 	for _, t := range r.Tasks {
 		b.WriteString(fmt.Sprintf("## @@%s → `%s`\n\n", t.RawAlias, t.Model))
+		if t.Err == nil && t.ModelNote != "" {
+			b.WriteString(fmt.Sprintf("_%s_\n\n", t.ModelNote))
+		}
 		switch {
 		case t.Skipped:
 			b.WriteString(fmt.Sprintf("_Skipped — %s. Run `prismag list` for details._\n\n", t.SkipNote))

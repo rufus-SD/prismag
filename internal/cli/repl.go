@@ -13,8 +13,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rufus-SD/prismag/internal/agent"
 	"github.com/rufus-SD/prismag/internal/availability"
 	"github.com/rufus-SD/prismag/internal/contextstore"
+	"github.com/rufus-SD/prismag/internal/discovery"
 	"github.com/rufus-SD/prismag/internal/orchestrator"
 	"github.com/rufus-SD/prismag/internal/registry"
 	"github.com/rufus-SD/prismag/internal/secrets"
@@ -59,6 +61,11 @@ type replState struct {
 	out       io.Writer // where session output is written
 	tty       bool      // true when attached to a terminal (enables spinner)
 	last      string    // last prompt, for :retry
+	ed        *editor   // line editor, also used to prompt for exec approvals
+
+	exec      bool // tool loop enabled for this session
+	execShell bool // run_shell allowed
+	execYes   bool // auto-approve actions (no per-action prompt)
 
 	mu     sync.Mutex
 	cancel context.CancelFunc // cancels the in-flight turn (set during runTurn)
@@ -273,6 +280,7 @@ func startREPL(resumeRef string) error {
 	ed := newEditor()
 	st.out = ed.out
 	st.tty = ed.tty
+	st.ed = ed
 	seedHistory(ed)
 
 	// Ctrl-C cancels the in-flight turn (terminal is cooked between prompts,
@@ -379,11 +387,14 @@ func (s *replState) runTurn(input string) {
 		Store:         s.store,
 		Creds:         s.creds,
 		Context:       availability.ContextCLI,
+		Models:        discovery.Cached(availability.ContextCLI, s.creds),
+		Exec:          s.execPolicy(),
 	}
 
 	// Stream live when interactive and serial; otherwise show a spinner and
-	// print the formatted report at the end.
-	streaming := s.tty && !flagParallel
+	// print the formatted report at the end. Exec mode never streams (it drives
+	// a tool loop with approval prompts).
+	streaming := s.tty && !flagParallel && !s.exec
 	stop := func() {}
 	var curAlias string
 	if streaming {
@@ -544,10 +555,76 @@ func (s *replState) handleMeta(cmd string) (quit bool) {
 		}
 	case "models":
 		fmt.Fprintln(s.out, "  run `prismag models` in another shell for live discovery; :list shows configured aliases")
+	case "exec":
+		s.setExec(rest)
 	default:
 		fmt.Fprintf(s.out, "  unknown command :%s — type :help\n", name)
 	}
 	return false
+}
+
+// setExec toggles the permission-gated tool loop for the session.
+//
+//	:exec            enable, ask before each action
+//	:exec shell      enable + allow run_shell
+//	:exec yes        enable + auto-approve every action (careful)
+//	:exec off        disable
+func (s *replState) setExec(arg string) {
+	switch strings.ToLower(strings.TrimSpace(arg)) {
+	case "off", "no", "0", "false":
+		s.exec, s.execShell, s.execYes = false, false, false
+		fmt.Fprintln(s.out, "  exec OFF — blocks return text only")
+		return
+	case "shell":
+		s.exec, s.execShell = true, true
+	case "yes", "auto":
+		s.exec, s.execYes = true, true
+	default:
+		s.exec = true
+	}
+	mode := "asks before each action"
+	if s.execYes {
+		mode = "auto-approves actions"
+	}
+	shell := ""
+	if s.execShell {
+		shell = " + shell"
+	}
+	fmt.Fprintf(s.out, "  exec ON%s — %s. Blocks can write files and act on this machine.\n", shell, mode)
+}
+
+// execPolicy builds the tool-loop policy for a turn, or nil when exec is off.
+func (s *replState) execPolicy() *agent.Policy {
+	if !s.exec {
+		return nil
+	}
+	return &agent.Policy{
+		AllowShell: s.execShell,
+		Emit:       func(line string) { fmt.Fprintln(s.out, line) },
+		Approve: func(a agent.Action) (bool, string) {
+			if s.execYes {
+				return true, ""
+			}
+			if s.confirm(fmt.Sprintf("  ⚠ allow %s ? [y/N] ", agent.Describe(a))) {
+				return true, ""
+			}
+			return false, "user declined"
+		},
+	}
+}
+
+// confirm asks a yes/no question using the line editor and returns true on "y".
+func (s *replState) confirm(prompt string) bool {
+	if s.ed == nil {
+		return false
+	}
+	s.ed.setPrompt(prompt)
+	line, err := s.ed.readLine()
+	if err != nil {
+		return false
+	}
+	ans := strings.ToLower(strings.TrimSpace(line))
+	return ans == "y" || ans == "yes"
 }
 
 // resume switches the live loop to a past session: it recalls that session's
@@ -714,6 +791,7 @@ func replHelp() string {
     :clear           stop recalling earlier turns for new prompts
     :transcript      print this session's transcript path
     :models          hint for live model discovery
+    :exec [shell|yes|off]  let blocks take real actions (write files, run_shell); asks before each
     :help            this help
     :quit            end the session (Ctrl-D also works)
 

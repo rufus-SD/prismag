@@ -5,7 +5,12 @@
 #   @@composer: implement the middleware
 #
 # Fields:
-#   model       concrete model id used by the CLI/API path
+#   model       concrete model id for the CLI/API path. Also the offline fallback
+#               and the family when `match` is omitted.
+#   match       optional model family/prefix (e.g. claude-opus-4-8). PRISMAG
+#               resolves it against the live model list for the active context and
+#               picks the best valid id, so an alias self-heals across renames and
+#               CLI/IDE naming differences. Falls back to `model` when offline.
 #   provider    backend + credential: anthropic|openai|openrouter|cursor|ollama|vllm
 #               (cursor is only reachable inside Cursor or via the Cursor SDK;
 #                ollama/vllm are local OpenAI-compatible servers — no API key)
@@ -17,12 +22,14 @@
 
 aliases:
   opus:
-    model: claude-4.6-opus-high-thinking
+    model: claude-opus-4-6
+    match: claude-opus-4-6
     provider: anthropic
     agent: opus-planner
     description: Deep reasoning, architecture, security review
   opus4.8:
-    model: claude-opus-4-8-thinking-high
+    model: claude-opus-4-8
+    match: claude-opus-4-8
     provider: anthropic
     agent: opus-planner
     description: Opus 4.8 — deep reasoning, architecture, security review
@@ -38,14 +45,17 @@ aliases:
     description: Composer 2.5 — fast implementation, multi-file edits
   fast:
     model: gpt-5.3-codex
+    match: gpt-5.3-codex
     provider: openai
     description: Cheap, quick summaries and simple transforms
   codex:
     model: gpt-5.3-codex
+    match: gpt-5.3-codex
     provider: openai
     description: Code generation specialist
   gpt5.5:
-    model: gpt-5.5-medium
+    model: gpt-5.5
+    match: gpt-5.5
     provider: openai
     agent: generalPurpose
     description: GPT-5.5 — general-purpose generation and reasoning

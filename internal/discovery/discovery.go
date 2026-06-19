@@ -50,6 +50,47 @@ func (r Result) All() []string {
 	return out
 }
 
+// Pick chooses the best concrete model id from pool for a given family, deterministically.
+// Preference order: a valid explicit pin, then an exact family match, then the
+// shortest id that has family as a prefix (tie-break lexicographic). Returns
+// (id, true) on a match; (\"\", false) when pool is empty or nothing matches.
+func Pick(pool []string, family, pinned string) (string, bool) {
+	if len(pool) == 0 {
+		return "", false
+	}
+	set := make(map[string]bool, len(pool))
+	for _, m := range pool {
+		set[m] = true
+	}
+	if pinned != "" && set[pinned] {
+		return pinned, true
+	}
+	if family != "" && set[family] {
+		return family, true
+	}
+	if family != "" {
+		best := ""
+		for _, m := range pool {
+			if strings.HasPrefix(m, family) && (best == "" || preferModel(m, best)) {
+				best = m
+			}
+		}
+		if best != "" {
+			return best, true
+		}
+	}
+	return "", false
+}
+
+// preferModel ranks two prefix candidates: shorter (least extra suffix) wins,
+// then lexicographic order for stability.
+func preferModel(a, b string) bool {
+	if len(a) != len(b) {
+		return len(a) < len(b)
+	}
+	return a < b
+}
+
 // Has reports whether a model id is in the discovered set.
 func (r Result) Has(id string) bool {
 	for _, ms := range r.ByProvider {
@@ -65,12 +106,94 @@ func (r Result) Has(id string) bool {
 // Empty reports whether nothing was discovered.
 func (r Result) Empty() bool { return len(r.All()) == 0 }
 
-// Discover returns available models for the given context.
+// Discover returns available models for the given context (live, uncached).
 func Discover(ctx availability.Context, creds availability.Credentials) Result {
 	if ctx == availability.ContextIDE {
 		return discoverIDE()
 	}
 	return discoverAPI(creds)
+}
+
+// Cached returns available models for the given context, using an on-disk cache
+// to keep routing cheap. IDE context reads the agent-maintained cache directly;
+// CLI context caches provider /models responses for apiCacheTTL and refreshes
+// lazily. It degrades gracefully: on a failed/empty refresh it returns the last
+// good cache if present, else an empty result (callers fall back to pinned ids).
+func Cached(ctx availability.Context, creds availability.Credentials) Result {
+	if ctx == availability.ContextIDE {
+		return discoverIDE()
+	}
+	return cachedAPI(creds)
+}
+
+const apiCacheTTL = 12 * time.Hour
+
+type apiCacheFile struct {
+	UpdatedAt  time.Time           `json:"updated_at"`
+	ByProvider map[string][]string `json:"byProvider"`
+}
+
+func apiCachePath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".config", "prismag", "models-cache.json"), nil
+}
+
+func cachedAPI(creds availability.Credentials) Result {
+	path, _ := apiCachePath()
+	if path != "" {
+		if cf, ok := readAPICache(path); ok && time.Since(cf.UpdatedAt) < apiCacheTTL {
+			return cacheResult(cf)
+		}
+	}
+	res := discoverAPI(creds)
+	if !res.Empty() {
+		if path != "" {
+			_ = writeAPICache(path, res.ByProvider)
+		}
+		return res
+	}
+	// Refresh failed or yielded nothing — serve the last good cache if we have one.
+	if path != "" {
+		if cf, ok := readAPICache(path); ok {
+			return cacheResult(cf)
+		}
+	}
+	return res
+}
+
+func cacheResult(cf apiCacheFile) Result {
+	return Result{
+		Context:    availability.ContextCLI.String(),
+		Source:     "api-cache",
+		ByProvider: cf.ByProvider,
+		UpdatedAt:  cf.UpdatedAt.UTC().Format(time.RFC3339),
+	}
+}
+
+func readAPICache(path string) (apiCacheFile, bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return apiCacheFile{}, false
+	}
+	var cf apiCacheFile
+	if err := json.Unmarshal(data, &cf); err != nil || len(cf.ByProvider) == 0 {
+		return apiCacheFile{}, false
+	}
+	return cf, true
+}
+
+func writeAPICache(path string, byProvider map[string][]string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(apiCacheFile{UpdatedAt: time.Now().UTC(), ByProvider: byProvider}, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0644)
 }
 
 func discoverAPI(creds availability.Credentials) Result {

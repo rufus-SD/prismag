@@ -146,9 +146,10 @@ context shared with every block goes here, before the first tag
 ```yaml
 aliases:
   opus:
-    model: claude-4.6-opus-high-thinking
+    model: claude-opus-4-6        # concrete id + offline fallback
+    match: claude-opus-4-6        # family resolved against the live model list
     provider: anthropic
-    agent: opus-planner          # subagent used when routing in-IDE
+    agent: opus-planner           # subagent used when routing in-IDE
     description: Deep reasoning, architecture, security review
   composer:
     model: composer-2.5-fast
@@ -161,6 +162,19 @@ aliases:
     description: Cheap, quick summaries and simple transforms
 ```
 
+### Models resolve to live ids (no more stale 404s)
+
+The same model has a different id in every context — `claude-opus-4-8` on the
+Anthropic API, `claude-opus-4-8-thinking-high` in Cursor, a local tag in Ollama.
+Pinning one string breaks the moment a provider renames or bumps a model.
+
+So PRISMAG treats an alias as a **family** and resolves it to a currently-valid id
+from the live model list for the active context (queried with your keys in the
+CLI, cached 12h; the agent-maintained cache in the IDE). It picks the best match
+deterministically, self-heals across renames, and falls back to the pinned `model`
+when offline. Set `match:` to make the family explicit; otherwise `model` doubles
+as it. Inspect what's available any time with `prismag models`.
+
 ## Commands
 
 | Command | What it does |
@@ -169,7 +183,7 @@ aliases:
 | `prismag setup` | First-time setup: keys, model discovery, starter registry |
 | `prismag init [tool]` | Wire routing into this project (auto-detects the editor) |
 | `prismag connect <tool>` | Write the integration rule (+ subagents where supported) |
-| `prismag run "@@..."` | Route and execute a tagged prompt |
+| `prismag run "@@..."` | Route and execute a tagged prompt (`--exec` to let blocks act) |
 | `prismag route "@@..."` | Show the delegation plan without executing (`--json` too) |
 | `prismag list` | List `@@aliases` with availability marks |
 | `prismag models` | Show models available right now |
@@ -220,6 +234,27 @@ Endpoints default to `http://localhost:11434/v1` (Ollama) and
 `http://localhost:8000/v1` (vLLM); override per-alias with `base_url` or globally
 with `OLLAMA_BASE_URL` / `VLLM_BASE_URL`. Mix freely — plan locally, implement in
 the cloud: `@@local: draft` then `@@opus: review`.
+
+## Let a block act on your machine (CLI exec mode)
+
+By default a CLI block returns **text** — PRISMAG is a router, not an agent. Opt in
+with `--exec` and a block can take real actions through a small, **permission-gated**
+tool loop: it asks before every step, so you grant rights action-by-action.
+
+```bash
+prismag run --exec "@@opus4.8: create ~/Desktop/poem.txt with a short flower poem"
+  ⚠ allow write_file ~/Desktop/poem.txt (291 bytes) ? [y/N] y
+  ✓ write_file ~/Desktop/poem.txt (291 bytes)
+```
+
+- Tools: `write_file`, `read_file`, and `run_shell` (only with `--exec-shell`).
+- Every action needs approval; `--yes` auto-approves (use with care), and a
+  non-interactive shell denies by default.
+- The protocol is provider-agnostic (a fenced `prismag` JSON action), so it works
+  on Anthropic, OpenAI, OpenRouter, **and local** Ollama/vLLM models alike.
+- **CLI-only by design**: inside an IDE the agent already has its own tools, so
+  PRISMAG just emits a delegation plan there. In the `prismag>` REPL, toggle it
+  with `:exec` (`:exec shell`, `:exec yes`, `:exec off`).
 
 ## Why no gateway (no LiteLLM)
 

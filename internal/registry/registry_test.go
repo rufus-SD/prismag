@@ -70,6 +70,23 @@ aliases:
 	}
 }
 
+func TestLoadMatchOnly(t *testing.T) {
+	yaml := `
+aliases:
+  opus:
+    match: claude-opus-4-8
+    provider: anthropic
+`
+	r, err := Load(writeRegistry(t, yaml))
+	if err != nil {
+		t.Fatalf("match-only alias should be valid: %v", err)
+	}
+	a, _ := r.Resolve("opus")
+	if a.Match != "claude-opus-4-8" {
+		t.Errorf("match = %q", a.Match)
+	}
+}
+
 func TestLoadMissingProvider(t *testing.T) {
 	yaml := `
 aliases:

@@ -10,6 +10,47 @@ import (
 	"github.com/rufus-SD/prismag/internal/availability"
 )
 
+func TestPick(t *testing.T) {
+	pool := []string{"claude-opus-4-8", "claude-opus-4-8-thinking-high", "claude-opus-4-6", "gpt-5.5", "gpt-5.5-pro"}
+	cases := []struct {
+		name           string
+		family, pinned string
+		want           string
+		ok             bool
+	}{
+		{"valid pin wins", "claude-opus-4-8", "claude-opus-4-6", "claude-opus-4-6", true},
+		{"exact family", "claude-opus-4-8", "", "claude-opus-4-8", true},
+		{"prefix shortest wins", "gpt-5.5", "", "gpt-5.5", true},
+		{"prefix only (no exact)", "claude-opus-4-1", "claude-opus-4-1", "", false},
+		{"cursor variant via prefix", "claude-opus-4-7", "claude-opus-4-7", "", false},
+		{"no match", "gemini", "gemini-ultra", "", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, ok := Pick(pool, c.family, c.pinned)
+			if ok != c.ok || got != c.want {
+				t.Fatalf("Pick(%q,%q) = (%q,%v), want (%q,%v)", c.family, c.pinned, got, ok, c.want, c.ok)
+			}
+		})
+	}
+}
+
+// When the API id is absent but a Cursor-style superset id exists, the family
+// prefix should resolve to it (the core self-healing case).
+func TestPickResolvesCursorSuperset(t *testing.T) {
+	pool := []string{"claude-opus-4-8-thinking-high", "composer-2.5-fast"}
+	got, ok := Pick(pool, "claude-opus-4-8", "claude-opus-4-8")
+	if !ok || got != "claude-opus-4-8-thinking-high" {
+		t.Fatalf("Pick = (%q,%v), want claude-opus-4-8-thinking-high", got, ok)
+	}
+}
+
+func TestPickEmptyPool(t *testing.T) {
+	if _, ok := Pick(nil, "x", "x"); ok {
+		t.Fatal("empty pool should not match")
+	}
+}
+
 func TestDiscoverAPI(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
