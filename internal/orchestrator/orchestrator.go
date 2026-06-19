@@ -16,8 +16,8 @@ import (
 
 const DefaultContextBudget = 2000
 
-// BackendFactory resolves a provider to a live backend (real APIs or test mocks).
-type BackendFactory func(provider registry.Provider) (backend.Backend, error)
+// BackendFactory resolves an alias to a live backend (real APIs or test mocks).
+type BackendFactory func(alias registry.Alias) (backend.Backend, error)
 
 // EnvBackendFactory uses provider env credentials.
 func EnvBackendFactory() BackendFactory {
@@ -197,7 +197,7 @@ func executeTask(ctx context.Context, preamble string, task parser.RoutedTask, o
 		return TaskResult{}, fmt.Errorf("alias not found")
 	}
 
-	b, err := opts.Factory(alias.Provider)
+	b, err := opts.Factory(alias)
 	if err != nil {
 		return TaskResult{Alias: task.Alias, RawAlias: task.RawAlias, Model: alias.Model, Index: task.Index}, err
 	}

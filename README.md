@@ -12,6 +12,7 @@ without switching the IDE picker or juggling chats.
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![CI](https://github.com/rufus-SD/prismag/actions/workflows/ci.yml/badge.svg)](https://github.com/rufus-SD/prismag/actions)
 [![Release](https://img.shields.io/github/v/release/rufus-SD/prismag?style=flat)](https://github.com/rufus-SD/prismag/releases)
+[![Local models](https://img.shields.io/badge/local-Ollama%20%C2%B7%20vLLM-0EA5E9?style=flat)](#local--private-models-ollama--vllm)
 [![Pairs with maind](https://img.shields.io/badge/pairs_with-maind-7C3AED?style=flat)](https://github.com/rufus-SD/maind)
 
 </div>
@@ -190,6 +191,35 @@ ANTHROPIC_API_KEY only:            + OPENAI_API_KEY:
 
 Inside an IDE that dispatches subagents, blocks route via your subscription —
 no API keys required.
+
+## Local & private models (Ollama / vLLM)
+
+Route any block to a model running on your own machine — no API key, no cloud,
+$0 per token. Both [Ollama](https://ollama.com) and
+[vLLM](https://github.com/vllm-project/vllm) expose an OpenAI-compatible API, so
+PRISMAG talks to them natively (streaming included).
+
+```bash
+ollama pull qwen2.5-coder:7b        # serves on http://localhost:11434
+```
+
+```yaml
+aliases:
+  local:
+    model: qwen2.5-coder:7b
+    provider: ollama                # or: vllm
+    # base_url: http://localhost:11434/v1   # optional override
+    description: Local model — private, free, offline
+```
+
+```bash
+prismag run "@@local: refactor this function"   # runs entirely on your box
+```
+
+Endpoints default to `http://localhost:11434/v1` (Ollama) and
+`http://localhost:8000/v1` (vLLM); override per-alias with `base_url` or globally
+with `OLLAMA_BASE_URL` / `VLLM_BASE_URL`. Mix freely — plan locally, implement in
+the cloud: `@@local: draft` then `@@opus: review`.
 
 ## Why no gateway (no LiteLLM)
 

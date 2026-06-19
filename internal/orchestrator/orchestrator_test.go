@@ -41,7 +41,7 @@ func (s streamStub) Stream(_ context.Context, _ backend.Request, onDelta func(st
 
 func TestRunStreaming(t *testing.T) {
 	reg := testRegistry(t)
-	factory := func(p registry.Provider) (backend.Backend, error) {
+	factory := func(a registry.Alias) (backend.Backend, error) {
 		return streamStub{text: "hello streamed world"}, nil
 	}
 	var got strings.Builder
@@ -91,8 +91,8 @@ func testRegistry(t *testing.T) *registry.Registry {
 }
 
 func testFactory() BackendFactory {
-	return func(p registry.Provider) (backend.Backend, error) {
-		switch p {
+	return func(a registry.Alias) (backend.Backend, error) {
+		switch a.Provider {
 		case registry.ProviderAnthropic:
 			return stubBackend{fn: func(req backend.Request) (backend.Response, error) {
 				if !strings.Contains(req.System, "shared preamble") {
@@ -105,7 +105,7 @@ func testFactory() BackendFactory {
 				return backend.Response{Text: "fast says: " + req.Prompt}, nil
 			}}, nil
 		default:
-			return nil, fmt.Errorf("unexpected provider %q", p)
+			return nil, fmt.Errorf("unexpected provider %q", a.Provider)
 		}
 	}
 }

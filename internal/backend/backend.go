@@ -34,18 +34,24 @@ type Streamer interface {
 	Stream(ctx context.Context, req Request, onDelta func(string)) (Response, error)
 }
 
-// New returns a backend for the given provider using env credentials.
-func New(p registry.Provider) (Backend, error) {
-	switch p {
+// New returns a backend for the given alias using env credentials. The full
+// alias is passed (not just the provider) so OpenAI-compatible local providers
+// can honor a per-alias base_url.
+func New(a registry.Alias) (Backend, error) {
+	switch a.Provider {
 	case registry.ProviderAnthropic:
 		return NewAnthropicFromEnv()
 	case registry.ProviderOpenAI:
 		return NewOpenAIFromEnv()
 	case registry.ProviderOpenRouter:
 		return NewOpenRouterFromEnv()
+	case registry.ProviderOllama:
+		return NewOllama(a.BaseURL), nil
+	case registry.ProviderVLLM:
+		return NewVLLM(a.BaseURL), nil
 	case registry.ProviderCursor:
 		return nil, fmt.Errorf("cursor provider requires the Cursor SDK (not available in CLI yet)")
 	default:
-		return nil, fmt.Errorf("unknown provider %q", p)
+		return nil, fmt.Errorf("unknown provider %q", a.Provider)
 	}
 }

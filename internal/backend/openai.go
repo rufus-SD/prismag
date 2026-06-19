@@ -17,11 +17,18 @@ type OpenAI struct {
 
 // NewOpenAI creates a backend with the given API key.
 func NewOpenAI(apiKey string) *OpenAI {
-	return &OpenAI{
-		client: newHTTPClient(openAIAPIURL, map[string]string{
-			"Authorization": "Bearer " + apiKey,
-		}),
+	return newOpenAICompatible(openAIAPIURL, apiKey)
+}
+
+// newOpenAICompatible builds an OpenAI-protocol backend against any base URL
+// (OpenAI, OpenRouter, Ollama, vLLM). An empty apiKey omits the Authorization
+// header — local servers like Ollama need no credentials.
+func newOpenAICompatible(baseURL, apiKey string) *OpenAI {
+	headers := map[string]string{}
+	if apiKey != "" {
+		headers["Authorization"] = "Bearer " + apiKey
 	}
+	return &OpenAI{client: newHTTPClient(baseURL, headers)}
 }
 
 // NewOpenAIFromEnv reads OPENAI_API_KEY.

@@ -19,6 +19,10 @@ const (
 	ProviderOpenAI     Provider = "openai"
 	ProviderOpenRouter Provider = "openrouter"
 	ProviderCursor     Provider = "cursor"
+	// ProviderOllama and ProviderVLLM are local, OpenAI-compatible servers.
+	// They need no API key — just a reachable base URL.
+	ProviderOllama Provider = "ollama"
+	ProviderVLLM   Provider = "vllm"
 )
 
 var validProviders = map[Provider]bool{
@@ -26,14 +30,25 @@ var validProviders = map[Provider]bool{
 	ProviderOpenAI:     true,
 	ProviderOpenRouter: true,
 	ProviderCursor:     true,
+	ProviderOllama:     true,
+	ProviderVLLM:       true,
+}
+
+// LocalProviders are providers served by a local, OpenAI-compatible endpoint
+// (no API key, no cloud).
+func (p Provider) IsLocal() bool {
+	return p == ProviderOllama || p == ProviderVLLM
 }
 
 // Alias maps one @@tag to a concrete model and backend.
 type Alias struct {
-	Model       string   `yaml:"model"`
-	Provider    Provider `yaml:"provider"`
-	Agent       string   `yaml:"agent,omitempty"` // IDE subagent that runs this block (delegation target)
-	Description string   `yaml:"description,omitempty"`
+	Model    string   `yaml:"model"`
+	Provider Provider `yaml:"provider"`
+	Agent    string   `yaml:"agent,omitempty"` // IDE subagent that runs this block (delegation target)
+	// BaseURL overrides the endpoint for OpenAI-compatible providers
+	// (ollama/vllm). Empty falls back to the provider default or its env var.
+	BaseURL     string `yaml:"base_url,omitempty"`
+	Description string `yaml:"description,omitempty"`
 }
 
 // Registry holds normalized alias → model mappings.
@@ -94,7 +109,7 @@ func validateAlias(path, name string, a Alias) error {
 		return fmt.Errorf("registry %s: alias %q: provider is required", path, name)
 	}
 	if !validProviders[provider] {
-		return fmt.Errorf("registry %s: alias %q: unknown provider %q (want anthropic, openai, openrouter, cursor)", path, name, provider)
+		return fmt.Errorf("registry %s: alias %q: unknown provider %q (want anthropic, openai, openrouter, cursor, ollama, vllm)", path, name, provider)
 	}
 	return nil
 }

@@ -147,6 +147,11 @@ func Resolve(p registry.Provider, creds Credentials, ctx Context) Result {
 			return Result{Status: StatusReady}
 		}
 		return Result{Status: StatusNeedsSDK, Detail: "Cursor SDK"}
+	case registry.ProviderOllama, registry.ProviderVLLM:
+		// Local OpenAI-compatible servers need no key. We can't statically
+		// probe the endpoint, so treat as ready; a run errors clearly if the
+		// server isn't up.
+		return Result{Status: StatusReady}
 	default:
 		return Result{Status: StatusNeedsKey, Detail: "unknown provider"}
 	}

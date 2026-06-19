@@ -131,7 +131,7 @@ aliases:
 | `parser` | Split prompt into tagged tasks + shared context |
 | `registry` | Load alias → model mappings from YAML |
 | `orchestrator` | Dispatch tasks, handle parallel/serial, chunk/label/budget context, aggregate results |
-| `backends` | Pluggable model providers (direct Anthropic / OpenAI APIs, OpenRouter, Cursor SDK) |
+| `backends` | Pluggable model providers (direct Anthropic / OpenAI APIs, OpenRouter, Cursor SDK, and local OpenAI-compatible servers: Ollama / vLLM) |
 | `context-store` | `ContextStore` interface for inter-task context + conversation history (in-memory default, maind backend) |
 | `formatter` | Merge sub-results into a single response |
 
@@ -365,7 +365,7 @@ N+1, and a 2-block serial run returns in <30s.
 |-------|--------|-----|
 | Language | **Go** | Single static binary, fast startup (matters for an agent that auto-runs it per block), minimal deps — and the **same stack as maind** |
 | CLI framework | `spf13/cobra` | Same as maind; the standard Go CLI toolkit |
-| Model backends | Direct provider REST via `net/http` (Anthropic, OpenAI) + optional OpenRouter | Smallest attack surface; no vendor SDK; keys go straight to vendors; no self-hosted gateway |
+| Model backends | Direct provider REST via `net/http` (Anthropic, OpenAI) + optional OpenRouter + local OpenAI-compatible servers (Ollama, vLLM) | Smallest attack surface; no vendor SDK; keys go straight to vendors; no self-hosted gateway; local models keep data on-device |
 | Memory / context | `ContextStore` interface — in-memory default, [maind](https://github.com/rufus-SD/maind) backend (shell out to `maind recall --json`) | Local, encrypted (AES-256-GCM), no network service; shared between CLI and IDE agent |
 | Config | YAML (`registry.yaml`) via `gopkg.in/yaml.v3` | Human-readable, git-friendly |
 | VS Code extension | thin **JS shim** (Chat Participant) that shells out to the `prismag` binary | The only JS needed; the routing core stays in Go |
