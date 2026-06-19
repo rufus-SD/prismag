@@ -1,0 +1,48 @@
+# PRISMAG alias registry
+# Maps @@aliases to concrete model IDs. User-editable.
+#
+#   @@opus: design the auth flow
+#   @@composer: implement the middleware
+#
+# Fields:
+#   model       concrete model id used by the CLI/API path
+#   provider    backend + credential: anthropic|openai|openrouter|cursor
+#               (cursor is only reachable inside Cursor or via the Cursor SDK)
+#   agent       IDE subagent that runs this block when routing in-IDE
+#               (delegation target — uses your subscription models, no API key)
+#   description shown by `prismag list`
+
+aliases:
+  opus:
+    model: claude-4.6-opus-high-thinking
+    provider: anthropic
+    agent: opus-planner
+    description: Deep reasoning, architecture, security review
+  opus4.8:
+    model: claude-opus-4-8-thinking-high
+    provider: anthropic
+    agent: opus-planner
+    description: Opus 4.8 — deep reasoning, architecture, security review
+  composer:
+    model: composer-2.5-fast
+    provider: cursor
+    agent: composer-implementer
+    description: Fast implementation, multi-file edits
+  composer2.5:
+    model: composer-2.5-fast
+    provider: cursor
+    agent: composer-implementer
+    description: Composer 2.5 — fast implementation, multi-file edits
+  fast:
+    model: gpt-5.3-codex
+    provider: openai
+    description: Cheap, quick summaries and simple transforms
+  codex:
+    model: gpt-5.3-codex
+    provider: openai
+    description: Code generation specialist
+  gpt5.5:
+    model: gpt-5.5-medium
+    provider: openai
+    agent: generalPurpose
+    description: GPT-5.5 — general-purpose generation and reasoning

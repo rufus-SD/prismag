@@ -1,0 +1,17 @@
+# Binaries
+/prismag
+bin/
+dist/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Local sessions / data
+.prismag/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
