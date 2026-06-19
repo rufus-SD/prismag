@@ -227,6 +227,13 @@ PRISMAG already *is* the router, so it calls provider REST APIs directly with no
 self-hosted proxy, DB, or admin UI to trust and patch. That keeps the
 dependency/supply-chain surface tiny — direct APIs, a single static binary.
 
+## Integrate PRISMAG into your tool
+
+PRISMAG is a routing protocol any agent can speak — no SDK required. Shell out to
+`prismag route --json` to get a deterministic plan (which model runs which block),
+then dispatch with your own model access; or `prismag run --api` to have PRISMAG
+execute and return the result. See [INTEGRATIONS.md](INTEGRATIONS.md).
+
 ## Pairs with maind
 
 [maind](https://github.com/rufus-SD/maind) is the optional memory backend: an
