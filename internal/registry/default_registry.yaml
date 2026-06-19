@@ -23,11 +23,13 @@
 # Top-level options (optional):
 #   default     alias for untagged prompts, so `prismag "do X"` works with no @@tag.
 #   exec        defaults for the CLI tool loop (set permissions once; flags still win):
-#                 enabled   let blocks act on your machine (write files, …). Off unless set.
-#                 shell     also allow the run_shell tool
-#                 approve   ask (confirm each action y/N — default) | auto (no prompt)
-#                 root      confine file actions to this tree (~ allowed)
-#                 max_steps cap tool iterations per block
+#                 enabled           let blocks act on your machine (write files, …). Off unless set.
+#                 shell             also allow the run_shell tool
+#                 approve           ask (confirm each action y/N — default) | auto (no prompt)
+#                 root              confine file actions to this tree (~ allowed)
+#                 max_steps         cap tool iterations per block
+#                 allow_destructive permit denylisted commands (rm -rf /, mkfs, fork bombs).
+#                                   Off by default — they're refused even when approved.
 #
 # Uncomment to make `prismag "create a folder on my desktop"` route to opus4.8 and
 # act on your machine, asking before each step:

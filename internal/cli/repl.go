@@ -63,11 +63,12 @@ type replState struct {
 	last      string    // last prompt, for :retry
 	ed        *editor   // line editor, also used to prompt for exec approvals
 
-	exec      bool   // tool loop enabled for this session
-	execShell bool   // run_shell allowed
-	execYes   bool   // auto-approve actions (no per-action prompt)
-	execRoot  string // confine file actions to this tree (from config; "" = none)
-	execSteps int    // max tool iterations per block (0 = engine default)
+	exec        bool   // tool loop enabled for this session
+	execShell   bool   // run_shell allowed
+	execYes     bool   // auto-approve actions (no per-action prompt)
+	execDestroy bool   // allow denylisted destructive commands (from config)
+	execRoot    string // confine file actions to this tree (from config; "" = none)
+	execSteps   int    // max tool iterations per block (0 = engine default)
 
 	mu     sync.Mutex
 	cancel context.CancelFunc // cancels the in-flight turn (set during runTurn)
@@ -243,15 +244,16 @@ func startREPL(resumeRef string) error {
 	inner, storeName := selectStore(flagStore)
 	cfg := reg.Exec()
 	st := &replState{
-		reg:       reg,
-		creds:     availability.FromEnv(),
-		store:     &offsetStore{inner: inner},
-		storeName: storeName,
-		exec:      cfg.Enabled,
-		execShell: cfg.Shell,
-		execYes:   cfg.AutoApprove(),
-		execRoot:  expandHome(cfg.Root),
-		execSteps: cfg.MaxSteps,
+		reg:         reg,
+		creds:       availability.FromEnv(),
+		store:       &offsetStore{inner: inner},
+		storeName:   storeName,
+		exec:        cfg.Enabled,
+		execShell:   cfg.Shell,
+		execYes:     cfg.AutoApprove(),
+		execDestroy: cfg.AllowDestructive,
+		execRoot:    expandHome(cfg.Root),
+		execSteps:   cfg.MaxSteps,
 	}
 
 	var seeded int
@@ -661,10 +663,11 @@ func (s *replState) execPolicy() *agent.Policy {
 		return nil
 	}
 	return &agent.Policy{
-		AllowShell: s.execShell,
-		Root:       s.execRoot,
-		MaxSteps:   s.execSteps,
-		Emit:       func(line string) { fmt.Fprintln(s.out, line) },
+		AllowShell:       s.execShell,
+		AllowDestructive: s.execDestroy,
+		Root:             s.execRoot,
+		MaxSteps:         s.execSteps,
+		Emit:             func(line string) { fmt.Fprintln(s.out, line) },
 		Approve: func(a agent.Action) (bool, string) {
 			if s.execYes {
 				return true, ""

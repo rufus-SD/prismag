@@ -33,6 +33,26 @@ compromised, so PRISMAG deliberately:
 This stance is a direct response to gateway supply-chain risk (cf. the March 2026
 LiteLLM PyPI compromise that harvested credentials).
 
+## Acting on your machine (exec mode)
+
+The CLI tool loop (`--exec` / `exec.enabled`) lets a block take real actions. It is
+**off by default** and built to keep you in control:
+
+- **Opt-in, layered.** Text-only unless you enable exec; `run_shell` is a further
+  opt-in (`exec.shell` / `--exec-shell`).
+- **Approval-gated.** With `approve: ask` (the default) every action is shown
+  verbatim and waits for your `y/N`. Non-interactive shells deny by default.
+- **Destructive commands are refused by default** — `rm -rf /`, `mkfs`,
+  `dd of=/dev/…`, disk redirects, fork bombs, `shutdown`/`reboot`, `chmod -R 777 /`
+  and similar are blocked **even when approved** (and even under `approve: auto`).
+  Ordinary deletes (`rm file`, `rm -rf ./build`) still go through the normal
+  prompt. Override only with the explicit `exec.allow_destructive: true`.
+- **Confinable.** `exec.root` restricts file reads/writes to one directory tree.
+- **Bounded.** `exec.max_steps` caps tool iterations per block.
+
+PRISMAG never suggests or auto-runs destructive operations; the model proposes,
+the denylist refuses the dangerous classes, and you approve the rest.
+
 ## Reporting a vulnerability
 
 If you discover a security issue, please report it responsibly:

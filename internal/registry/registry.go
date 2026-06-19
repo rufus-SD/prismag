@@ -66,6 +66,9 @@ type ExecConfig struct {
 	Enabled bool `yaml:"enabled"`
 	// Shell also allows the run_shell tool when exec is enabled.
 	Shell bool `yaml:"shell"`
+	// AllowDestructive permits denylisted commands (rm -rf /, mkfs, fork bombs,
+	// …). Off by default — such commands are refused even when approved.
+	AllowDestructive bool `yaml:"allow_destructive,omitempty"`
 	// Approve is "ask" (confirm each action with y/N — the default) or "auto"
 	// (run actions without prompting).
 	Approve string `yaml:"approve,omitempty"`

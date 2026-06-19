@@ -272,6 +272,10 @@ prismag run --exec "@@opus4.8: create ~/Desktop/poem.txt with a short flower poe
 - Every action needs approval; `approve: auto` (or `--yes`) skips the prompt (use
   with care), and a non-interactive shell denies by default. `root:` confines file
   actions to one tree.
+- **Destructive commands are refused by default** — `rm -rf /`, `mkfs`, `dd of=/dev/…`,
+  fork bombs, `shutdown`, etc. are blocked *even if approved*, so a careless `y` (or
+  `approve: auto`) can't wreck your machine. Ordinary deletes still work via the
+  normal prompt. Override only with `exec.allow_destructive: true`.
 - The protocol is provider-agnostic (a fenced `prismag` JSON action), so it works
   on Anthropic, OpenAI, OpenRouter, **and local** Ollama/vLLM models alike.
 - **CLI-only by design**: inside an IDE the agent already has its own tools, so

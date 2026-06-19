@@ -218,11 +218,12 @@ func buildExecPolicy(reg *registry.Registry) *agent.Policy {
 		return nil
 	}
 	return &agent.Policy{
-		AllowShell: flagExecShell || cfg.Shell,
-		Root:       expandHome(cfg.Root),
-		MaxSteps:   cfg.MaxSteps,
-		Approve:    cliApprover(flagExecYes || cfg.AutoApprove()),
-		Emit:       func(s string) { fmt.Fprintln(os.Stderr, s) },
+		AllowShell:       flagExecShell || cfg.Shell,
+		AllowDestructive: cfg.AllowDestructive,
+		Root:             expandHome(cfg.Root),
+		MaxSteps:         cfg.MaxSteps,
+		Approve:          cliApprover(flagExecYes || cfg.AutoApprove()),
+		Emit:             func(s string) { fmt.Fprintln(os.Stderr, s) },
 	}
 }
 

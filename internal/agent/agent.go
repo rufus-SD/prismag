@@ -50,6 +50,10 @@ type CompleteFunc func(ctx context.Context, system, prompt string) (string, erro
 type Policy struct {
 	// AllowShell enables the run_shell tool. Off by default.
 	AllowShell bool
+	// AllowDestructive permits commands that match the destructive denylist
+	// (rm -rf /, mkfs, fork bombs, …). Off by default: such commands are
+	// refused even when the user approves them.
+	AllowDestructive bool
 	// Root, if set, confines file reads/writes to this directory tree.
 	Root string
 	// MaxSteps caps tool iterations to avoid runaway loops (default 12).
@@ -115,7 +119,8 @@ func SystemPrompt(base string, pol Policy) string {
 	b.WriteString("- Emit only one action block per reply. After each action you receive its result, then continue.\n")
 	b.WriteString("- Paths may use ~ for the home directory. Use absolute paths when the task names a location.\n")
 	b.WriteString("- When the task is complete, reply with a short confirmation and NO action block.\n")
-	b.WriteString("- Every action requires the user's permission; if denied, adapt or stop.\n\n")
+	b.WriteString("- Every action requires the user's permission; if denied, adapt or stop.\n")
+	b.WriteString("- Never delete, overwrite, or run irreversible/destructive commands unless the task explicitly asks for it. Prefer safe, reversible actions, and scope file operations narrowly.\n\n")
 	if cwd != "" {
 		fmt.Fprintf(&b, "Working directory: %s\n", cwd)
 	}
@@ -156,9 +161,14 @@ func Run(ctx context.Context, complete CompleteFunc, base, task string, pol Poli
 		}
 
 		allowed, reason := true, ""
-		if act.Tool == ToolShell && !pol.AllowShell {
+		switch {
+		case act.Tool == ToolShell && !pol.AllowShell:
 			allowed, reason = false, "shell is disabled (pass --exec-shell to enable)"
-		} else {
+		case act.Tool == ToolShell && !pol.AllowDestructive && IsDestructive(act.Command):
+			// Refuse outright — never even prompt — so an auto-approve config
+			// can't wave through a machine-wrecking command.
+			allowed, reason = false, "refused as destructive (set exec.allow_destructive: true to override)"
+		default:
 			allowed, reason = pol.Approve(act)
 		}
 
@@ -232,6 +242,11 @@ func execute(a Action, pol Policy) (string, error) {
 	case ToolShell:
 		if !pol.AllowShell {
 			return "", fmt.Errorf("shell is disabled")
+		}
+		// Defense in depth: even if the gate above was bypassed, never run a
+		// denylisted command unless the user explicitly opted in.
+		if !pol.AllowDestructive && IsDestructive(a.Command) {
+			return "", fmt.Errorf("destructive command blocked by policy")
 		}
 		cmd := exec.Command("sh", "-c", a.Command)
 		if pol.Root != "" {
