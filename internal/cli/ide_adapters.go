@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -261,7 +262,9 @@ func installEmbeddedAgents(fsys fs.FS, srcDir, destDir string) (int, error) {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
 			continue
 		}
-		data, err := fs.ReadFile(fsys, filepath.Join(srcDir, e.Name()))
+		// embed.FS / io/fs paths are always forward-slash, regardless of OS, so
+		// use path.Join here (not filepath.Join, which breaks on Windows).
+		data, err := fs.ReadFile(fsys, path.Join(srcDir, e.Name()))
 		if err != nil {
 			return count, err
 		}
